@@ -1,88 +1,160 @@
 from flask import Flask, request, jsonify
-from db import create_table, get_db_connection
+from flask_cors import CORS
+from datetime import datetime
+
+from db import create_table, insert_booking, fetch_all_bookings
+from pricing import get_pricing_signal
+from analytics import revenue_analytics, demand_by_category
+
+
+# -------------------
+# APP CONFIG
+# -------------------
 
 app = Flask(__name__)
+CORS(app)
+
+API_KEY = "sciative-demo-key"
+
+# Ensure DB exists
 create_table()
 
-@app.route("/")
+
+# -------------------
+# AUTH HELPER
+# -------------------
+
+def require_api_key(req):
+    key = req.headers.get("X-API-KEY")
+    return key == API_KEY
+
+
+def unauthorized():
+    return jsonify({
+        "error": "Unauthorized",
+        "message": "Invalid or missing API key"
+    }), 401
+
+
+# -------------------
+# HOME
+# -------------------
+
+@app.route("/", methods=["GET"])
 def home():
-    return {"message": "Transaction API is running"}
-
-@app.route("/transaction", methods=["POST"])
-def add_transaction():
-    data = request.get_json()
-
-    if not data or "amount" not in data or "type" not in data:
-        return {"error": "Invalid input"}, 400
-
-    amount = data["amount"]
-    tx_type = data["type"]
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "INSERT INTO transactions (amount, type, timestamp) VALUES (?, ?, datetime('now'))",
-        (amount, tx_type)
-    )
-
-    conn.commit()
-    conn.close()
-
-    return {"message": "Transaction added successfully"}, 201
-
-@app.route("/transactions", methods=["GET"])
-def get_transactions():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM transactions")
-    rows = cursor.fetchall()
-    conn.close()
-
-    return jsonify([dict(row) for row in rows])
+    return jsonify({
+        "service": "PriceOptima Booking Pricing API",
+        "status": "running"
+    })
 
 
+# -------------------
+# CREATE BOOKING (PROTECTED)
+# -------------------
 
-@app.route("/analytics", methods=["GET"])
-def analytics():
-    conn = get_db_connection()
-    cursor = conn.cursor()
+@app.route("/booking", methods=["POST"])
+def create_booking():
 
-    # Total transactions
-    cursor.execute("SELECT COUNT(*) FROM transactions")
-    total_transactions = cursor.fetchone()[0]
+    if not require_api_key(request):
+        return unauthorized()
 
-    # Total debit amount
-    cursor.execute(
-        "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE type = 'debit'"
-    )
-    total_debit = cursor.fetchone()[0]
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({
+            "error": "InvalidRequest",
+            "message": "JSON body required"
+        }), 400
 
-    # Total credit amount
-    cursor.execute(
-        "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE type = 'credit'"
-    )
-    total_credit = cursor.fetchone()[0]
+    category = data.get("category")
+    base_price = data.get("base_price")
 
-    # Count by type
-    cursor.execute(
-        "SELECT type, COUNT(*) as count FROM transactions GROUP BY type"
-    )
-    type_counts = cursor.fetchall()
+    if not isinstance(category, str) or not category.strip():
+        return jsonify({
+            "error": "ValidationError",
+            "field": "category",
+            "message": "category must be a non-empty string"
+        }), 400
 
-    conn.close()
+    if not isinstance(base_price, (int, float)) or base_price <= 0:
+        return jsonify({
+            "error": "ValidationError",
+            "field": "base_price",
+            "message": "base_price must be a positive number"
+        }), 400
 
-    breakdown = {}
-    for row in type_counts:
-        breakdown[row["type"]] = row["count"]
+    # Pricing logic
+    bookings = fetch_all_bookings()
+    pricing = get_pricing_signal(bookings)
+
+    final_price = round(base_price * pricing["price_multiplier"], 2)
+    booking_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        insert_booking(category, base_price, final_price, booking_time)
+    except Exception:
+        return jsonify({
+            "error": "DatabaseError",
+            "message": "Failed to store booking"
+        }), 500
 
     return jsonify({
-        "total_transactions": total_transactions,
-        "total_debit_amount": total_debit,
-        "total_credit_amount": total_credit,
-        "transactions_by_type": breakdown
+        "status": "success",
+        "data": {
+            "category": category,
+            "base_price": base_price,
+            "final_price": final_price,
+            "pricing_reason": pricing["reason"],
+            "booking_time": booking_time
+        }
+    }), 201
+
+
+# -------------------
+# GET BOOKINGS (PUBLIC)
+# -------------------
+
+@app.route("/bookings", methods=["GET"])
+def get_bookings():
+    bookings = fetch_all_bookings()
+    return jsonify({
+        "count": len(bookings),
+        "data": bookings
     })
+
+
+# -------------------
+# ANALYTICS: REVENUE (PUBLIC)
+# -------------------
+
+@app.route("/analytics/revenue", methods=["GET"])
+def revenue():
+    bookings = fetch_all_bookings()
+    return jsonify(revenue_analytics(bookings))
+
+
+# -------------------
+# ANALYTICS: DEMAND (PUBLIC)
+# -------------------
+
+@app.route("/analytics/demand", methods=["GET"])
+def demand():
+    bookings = fetch_all_bookings()
+    return jsonify(demand_by_category(bookings))
+
+
+# -------------------
+# PRICING SIGNAL (PUBLIC)
+# -------------------
+
+@app.route("/pricing/signal", methods=["GET"])
+def pricing_signal():
+    bookings = fetch_all_bookings()
+    return jsonify(get_pricing_signal(bookings))
+
+
+# -------------------
+# RUN SERVER
+# -------------------
 
 if __name__ == "__main__":
     app.run(debug=True)

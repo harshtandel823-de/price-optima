@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PriceOptima – Booking Pricing Dashboard</title>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Segoe UI", Arial, sans-serif;
+            background: #f4f6f8;
+            margin: 0;
+            padding: 30px;
+            color: #2c3e50;
+        }
+
+        h1 {
+            margin-bottom: 10px;
+        }
+
+        h2 {
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: auto;
+        }
+
+        button {
+            padding: 10px 16px;
+            cursor: pointer;
+            background: #4f46e5;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        button:hover {
+            background: #4338ca;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+            margin-top: 25px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        th, td {
+            padding: 12px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+        }
+
+        th {
+            background: #f1f5f9;
+            font-weight: 600;
+        }
+
+        tr:hover {
+            background: #f9fafb;
+        }
+
+        .chart-box {
+            height: 320px;
+            max-width: 900px;
+            margin: auto;
+        }
+
+        canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .subtitle {
+            color: #64748b;
+            margin-bottom: 20px;
+        }
+
+        footer {
+            margin-top: 40px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <div class="top-bar">
+        <div>
+            <h1>📊 PriceOptima</h1>
+            <div class="subtitle">Dynamic Booking Pricing & Demand Analytics</div>
+        </div>
+        <button onclick="loadAll()">🔄 Refresh</button>
+    </div>
+
+    <!-- BOOKINGS -->
+    <div class="card">
+        <h2>📋 Recent Bookings</h2>
+        <table id="bookingsTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Category</th>
+                    <th>Base Price</th>
+                    <th>Final Price</th>
+                    <th>Booking Time</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <!-- REVENUE -->
+    <div class="card">
+        <h2>📈 Revenue Analytics</h2>
+        <div class="chart-box">
+            <canvas id="revenueChart"></canvas>
+        </div>
+    </div>
+
+    <!-- DEMAND -->
+    <div class="card">
+        <h2>📊 Demand by Category</h2>
+        <div class="chart-box">
+            <canvas id="demandChart"></canvas>
+        </div>
+    </div>
+
+    <footer>
+        PriceOptima • Built with Flask & Chart.js • Demo Dashboard
+    </footer>
+
+</div>
+
+<script>
+const BASE_URL = "http://127.0.0.1:5000";
+
+let revenueChart;
+let demandChart;
+
+async function loadAll() {
+    await loadBookings();
+    await loadRevenue();
+    await loadDemand();
+}
+
+async function loadBookings() {
+    const res = await fetch(`${BASE_URL}/bookings`);
+    const result = await res.json();
+
+    const tbody = document.querySelector("#bookingsTable tbody");
+    tbody.innerHTML = "";
+
+    result.data.forEach(b => {
+        tbody.innerHTML += `
+            <tr>
+                <td>${b.id}</td>
+                <td>${b.category}</td>
+                <td>${b.base_price}</td>
+                <td>${b.final_price}</td>
+                <td>${b.booking_time}</td>
+            </tr>
+        `;
+    });
+}
+
+async function loadRevenue() {
+    const res = await fetch(`${BASE_URL}/analytics/revenue`);
+    const data = await res.json();
+
+    console.log("Revenue:", data);
+
+    const daily = data.daily || data;
+
+    const labels = Object.keys(daily);
+    const values = Object.values(daily);
+
+    if (revenueChart) revenueChart.destroy();
+
+    revenueChart = new Chart(document.getElementById("revenueChart"), {
+        type: "line",
+        data: {
+            labels,
+            datasets: [{
+                label: "Daily Revenue",
+                data: values,
+                borderColor: "#22c55e",
+                backgroundColor: "rgba(34,197,94,0.25)",
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: true }
+            }
+        }
+    });
+}
+
+async function loadDemand() {
+    const res = await fetch(`${BASE_URL}/analytics/demand`);
+    const data = await res.json();
+
+    console.log("Demand:", data);
+
+    const labels = Object.keys(data);
+    const values = Object.values(data);
+
+    if (demandChart) demandChart.destroy();
+
+    demandChart = new Chart(document.getElementById("demandChart"), {
+        type: "bar",
+        data: {
+            labels,
+            datasets: [{
+                label: "Bookings",
+                data: values,
+                backgroundColor: "#8b5cf6"
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+}
+
+// Auto-load
+loadAll();
+</script>
+
+</body>
+</html>
+
+
